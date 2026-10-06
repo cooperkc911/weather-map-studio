@@ -1,0 +1,60 @@
+name: Claude
+
+# Mention @claude in an issue or a comment (e.g. "@claude add a snowfall map") and Claude will
+# do the work in this repo, test it, and open a pull request. Any map files it makes while
+# testing are attached to the run under "Artifacts".
+on:
+  issues:
+    types: [opened, assigned]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install map tools (so Claude can test what it builds)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+          pip install -q -r requirements-build.txt pytest
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --allowedTools "Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(pytest:*),Bash(ffmpeg:*),Bash(ffprobe:*),Bash(ls:*),Bash(curl:*),Bash(mkdir:*)"
+      - name: Attach any maps Claude made
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-output-${{ github.run_number }}
+          path: out/
+          retention-days: 30
+          if-no-files-found: ignore

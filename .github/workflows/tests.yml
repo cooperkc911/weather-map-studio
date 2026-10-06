@@ -1,0 +1,17 @@
+name: Tests
+# Runs automatically whenever code changes, so you (and Claude) know nothing broke.
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+      - run: pip install -q -r requirements-build.txt pytest
+      - run: python -m pytest -q tests

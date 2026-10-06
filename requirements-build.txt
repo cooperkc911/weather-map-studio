@@ -1,0 +1,10 @@
+# heavy (only installed when something is being built/posted)
+-r requirements.txt
+requests-oauthlib>=1.3
+anthropic>=0.40
+matplotlib>=3.8
+scipy>=1.11
+xarray>=2024.1
+netCDF4>=1.6
+cfgrib>=0.9.14
+eccodes>=2.37

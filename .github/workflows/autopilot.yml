@@ -1,0 +1,88 @@
+name: Autopilot (optional)
+
+# OFF by default. To turn it on: Settings -> Secrets and variables -> Actions -> Variables ->
+# add AUTOPILOT = on. It then watches the weather every 15 minutes and builds maps when something
+# big happens (severe outbreaks, hurricanes, big winter storms / cold / heat), plus a daily
+# upper-air analysis and "years ago today" storm animations. Add POST_TO_X = on to also post them.
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # watcher
+    - cron: "40 16 * * *"    # 12Z upper-air analysis
+    - cron: "5 14 * * *"     # storm anniversaries
+
+concurrency:
+  group: autopilot
+  cancel-in-progress: false
+
+env:
+  NWS_CONTACT: ${{ vars.NWS_CONTACT }}
+  BOT_BRAND: ${{ vars.BOT_BRAND }}
+  BOT_HANDLE: ${{ vars.BOT_HANDLE }}
+  DISPLAY_TZ: ${{ vars.DISPLAY_TZ }}
+  BOT_PERSONA: ${{ vars.BOT_PERSONA }}
+
+jobs:
+  run:
+    if: vars.AUTOPILOT == 'on'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick task
+        id: pick
+        run: |
+          case "${{ github.event.schedule }}" in
+            "*/15 * * * *") echo "cmd=watch" >> "$GITHUB_OUTPUT" ;;
+            "40 16 * * *")  echo "cmd=upper-air" >> "$GITHUB_OUTPUT" ;;
+            *)              echo "cmd=anniversary" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Restore memory (what was already posted)
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          key: autopilot-state-${{ github.run_id }}
+          restore-keys: autopilot-state-
+      - name: Quick check (is anything happening?)
+        id: plan
+        if: steps.pick.outputs.cmd == 'watch'
+        run: |
+          mkdir -p .state && touch .state/.keep
+          pip install -q -r requirements.txt
+          python -m studio watch --plan-only
+      - name: Install map tools
+        if: steps.pick.outputs.cmd != 'watch' || steps.plan.outputs.build_needed == 'true'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+          pip install -q -r requirements-build.txt
+      - name: Build (and post if POST_TO_X = on)
+        if: steps.pick.outputs.cmd != 'watch' || steps.plan.outputs.build_needed == 'true'
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p .state && touch .state/.keep
+          DRY="--dry-run"
+          [ "${{ vars.POST_TO_X }}" = "on" ] && DRY=""
+          python -m studio ${{ steps.pick.outputs.cmd }} $DRY
+      - name: Save memory
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: autopilot-state-${{ github.run_id }}
+      - name: Save the maps (download from "Artifacts")
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autopilot-${{ steps.pick.outputs.cmd }}-${{ github.run_number }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: ignore

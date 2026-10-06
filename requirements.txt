@@ -1,0 +1,4 @@
+# light (the frequent "is anything happening?" check)
+requests>=2.31
+numpy>=1.26
+Pillow>=10.1

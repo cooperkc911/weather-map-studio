@@ -1,0 +1,94 @@
+name: Make a map
+
+# Click "Run workflow" on the Actions tab, pick a map, and download the result from the run's Artifacts.
+on:
+  workflow_dispatch:
+    inputs:
+      map:
+        description: "Which map or animation?"
+        type: choice
+        options:
+          - hurricane-animation
+          - upper-air-analysis
+          - severe-outbreak-recap
+          - hazard-map
+        default: hurricane-animation
+      storm:
+        description: "Hurricane animation: storm name (KATRINA) or ID (AL092024, EP182026)"
+        default: "KATRINA"
+      year:
+        description: "Hurricane animation: year (when using a name)"
+        default: "2005"
+      start:
+        description: "Severe recap: start time in UTC (2025-05-16T17:00)"
+        default: "2025-05-16T17:00"
+      end:
+        description: "Severe recap: end time in UTC"
+        default: "2025-05-17T04:00"
+      hazard:
+        description: "Hazard map: which hazard"
+        type: choice
+        options: [cold, heat, winter, blizzard, ice, wind, fire, flood, dust]
+        default: cold
+      post_to_x:
+        description: "Also post it to X (needs the X keys in Secrets)"
+        type: boolean
+        default: false
+
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+          pip install -q -r requirements-build.txt
+      - name: Reuse downloaded data
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+      - name: Make it
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BOT_BRAND: ${{ vars.BOT_BRAND }}
+          BOT_HANDLE: ${{ vars.BOT_HANDLE }}
+          DISPLAY_TZ: ${{ vars.DISPLAY_TZ }}
+          NWS_CONTACT: ${{ vars.NWS_CONTACT }}
+          MAP: ${{ inputs.map }}
+          STORM: ${{ inputs.storm }}
+          YEAR: ${{ inputs.year }}
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+          HAZARD: ${{ inputs.hazard }}
+        run: |
+          DRY="--dry-run"
+          [ "${{ inputs.post_to_x }}" = "true" ] && DRY=""
+          case "$MAP" in
+            hurricane-animation)
+              if echo "$STORM" | grep -Eq '^[A-Za-z]{2}[0-9]{6}$'; then python -m studio storm-anim --id "$STORM" $DRY
+              else python -m studio storm-anim --name "$STORM" --year "$YEAR" $DRY; fi ;;
+            upper-air-analysis)    python -m studio upper-air --force $DRY ;;
+            severe-outbreak-recap) python -m studio replay --start "$START" --end "$END" $DRY ;;
+            hazard-map)            python -m studio hazard --group "$HAZARD" --force $DRY ;;
+          esac
+      - name: Save the result (download it from "Artifacts" below)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.map }}-${{ github.run_number }}
+          path: out/
+          retention-days: 30
+          if-no-files-found: ignore
